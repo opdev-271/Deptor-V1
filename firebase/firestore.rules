@@ -1,0 +1,122 @@
+rules_version = '2';
+
+// Pravidla vynucují:
+//  1) k datům skupiny se dostane jen její člen,
+//  2) strukturální platnost transakce (typy, kladná částka, neprázdná pole, limity).
+//
+// Co tu záměrně NENÍ: kontrola invariantu sum(payers) == sum(splits) == amountMinor.
+// Jazyk security rules nemá smyčky ani reduce a pole umí jen size()/indexaci/in —
+// sečíst pole libovolné délky v něm nejde. Obcházet to denormalizovaným polem se
+// součtem nemá smysl: klient, který spočítá podíly špatně, spočítá stejně špatně
+// i ten součet, takže by kontrola neodhalila nic.
+//
+// Invariant proto hlídá doména na obou stranách:
+//   - při zápisu  → Transaction.init
+//   - při čtení   → TransactionMapper odmítne dokument, který invariant porušuje,
+//                   takže rozbitý záznam neotráví salda, i kdyby se do databáze dostal.
+// Pokud by to jednou přestalo stačit, správné místo je Cloud Function na onWrite.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function groupData(groupId) {
+      return get(/databases/$(database)/documents/groups/$(groupId)).data;
+    }
+
+    function isMember(groupId) {
+      return isSignedIn() && request.auth.uid in groupData(groupId).memberUids;
+    }
+
+    function isOwner(groupId) {
+      return isSignedIn() && request.auth.uid == groupData(groupId).ownerUid;
+    }
+
+    // Horní limity jsou pojistka proti dokumentu, který by rozbil klienta,
+    // ne proti běžnému použití — reálná skupina se do nich pohodlně vejde.
+    function validTransaction(data) {
+      return data.amountMinor is int
+          && data.amountMinor > 0
+          && data.currency is string
+          && data.currency.size() == 3
+          && data.type in ['EXPENSE', 'SETTLEMENT', 'INCOME']
+          && data.payers is list
+          && data.payers.size() > 0
+          && data.payers.size() <= 64
+          && data.splits is list
+          && data.splits.size() > 0
+          && data.splits.size() <= 256;
+    }
+
+    match /users/{userId} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn() && request.auth.uid == userId;
+    }
+
+    /**
+     * Vstup do skupiny přes pozvánku.
+     *
+     * Nečlen skupinu přečíst nesmí, takže `inviteCode` nemá jak zjistit. Klient proto
+     * pošle kód, který zná, v poli `joinToken`, a pravidlo ho porovná s uloženým
+     * `inviteCode`. Server tím ověří znalost kódu, aniž by ho kdy vydal ven — kód
+     * funguje jako oprávnění.
+     *
+     * Zároveň se hlídá, že zápis nedělá nic jiného: mění se jen memberUids a joinToken,
+     * a do memberUids smí přibýt výhradně volající. Jinak by pozvánka byla vstupenka
+     * k přepsání názvu, měny nebo vlastníka skupiny.
+     */
+    function isJoiningWithValidInvite() {
+      let incoming = request.resource.data;
+      let current = resource.data;
+
+      return isSignedIn()
+          && current.inviteCode is string
+          && current.inviteCode.size() > 0
+          && incoming.joinToken == current.inviteCode
+          && incoming.diff(current).affectedKeys().hasOnly(['memberUids', 'joinToken'])
+          && incoming.memberUids.toSet() == current.memberUids.toSet().union([request.auth.uid].toSet());
+    }
+
+    match /groups/{groupId} {
+      allow read: if isSignedIn() && request.auth.uid in resource.data.memberUids;
+
+      // Zakladatel musí být vlastníkem i členem, jinak by vznikla skupina,
+      // do které se nikdo nedostane.
+      allow create: if isSignedIn()
+                    && request.auth.uid == request.resource.data.ownerUid
+                    && request.auth.uid in request.resource.data.memberUids;
+
+      allow update: if (isMember(groupId)
+                      // Vlastnictví smí přepsat jen vlastník.
+                      && (request.resource.data.ownerUid == resource.data.ownerUid || isOwner(groupId)))
+                    || isJoiningWithValidInvite();
+
+      allow delete: if isOwner(groupId);
+
+      match /members/{memberId} {
+        allow read: if isMember(groupId);
+        allow create, update: if isMember(groupId);
+        allow delete: if isOwner(groupId);
+      }
+
+      // Opakování si spravují členové; vzor se ověřuje stejně jako běžná transakce.
+      match /recurrences/{recurrenceId} {
+        allow read: if isMember(groupId);
+        allow create, update: if isMember(groupId)
+                              && validTransaction(request.resource.data.template);
+        allow delete: if isMember(groupId);
+      }
+
+      match /transactions/{transactionId} {
+        allow read: if isMember(groupId);
+        allow create: if isMember(groupId) && validTransaction(request.resource.data);
+        allow update: if isMember(groupId) && validTransaction(request.resource.data);
+        // Mazat smí autor záznamu nebo vlastník skupiny.
+        allow delete: if isOwner(groupId)
+                      || (isMember(groupId) && request.auth.uid == resource.data.createdBy);
+      }
+    }
+  }
+}

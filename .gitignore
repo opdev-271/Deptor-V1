@@ -1,0 +1,15 @@
+*.iml
+.gradle/
+.kotlin/
+/local.properties
+/.idea/
+.DS_Store
+/build
+*/build/
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+
+# Firebase — obsahuje projektové identifikátory, nepatří do veřejného repa
+/app/google-services.json

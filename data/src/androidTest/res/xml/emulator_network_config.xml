@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Firebase emulátor mluví plain HTTP. Výjimka je proto nutná, ale je záměrně omezená
+  na 10.0.2.2 (loopback vývojového stroje z pohledu Android emulátoru) a leží jen
+  v androidTest source setu — do produkční aplikace se nedostane.
+-->
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">10.0.2.2</domain>
+    </domain-config>
+</network-security-config>

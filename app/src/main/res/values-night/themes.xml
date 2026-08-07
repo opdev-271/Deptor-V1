@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Tmavá varianta okna. Bez ní by měla Activity natvrdo světlé pozadí a při startu
+  v tmavém režimu by problikla bílá, než Compose vykreslí svůj Surface.
+-->
+<resources>
+    <style name="Theme.Deptor" parent="android:Theme.Material.NoActionBar" />
+</resources>

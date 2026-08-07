@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Exportované soubory leží v cache, ne v trvalém úložišti: jsou to jednorázové
+  přílohy, které si systém sám uklidí, když dojde místo.
+-->
+<paths>
+    <cache-path name="exports" path="exports/" />
+</paths>
