@@ -13,3 +13,5 @@ local.properties
 
 # Firebase — obsahuje projektové identifikátory, nepatří do veřejného repa
 /app/google-services.json
+.claude/
+*.log
